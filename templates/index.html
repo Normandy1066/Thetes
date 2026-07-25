@@ -1,233 +1,84 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thetis — Algorithmic Trading Dashboard</title>
-    <meta name="description" content="Real-time algorithmic trading bot dashboard powered by EMA crossover and RSI strategy.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MetaTrader‑Style Trading Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-
-<!-- ─── BACKGROUND PARTICLES ─── -->
-<div class="bg-particles">
-    <div class="particle p1"></div>
-    <div class="particle p2"></div>
-    <div class="particle p3"></div>
-    <div class="particle p4"></div>
-    <div class="particle p5"></div>
-</div>
-
-<!-- ─── HEADER ─── -->
-<header id="app-header">
-    <div class="header-left">
-        <div class="logo-mark">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <path d="M16 2L28 8V24L16 30L4 24V8L16 2Z" stroke="url(#grad)" stroke-width="2" fill="none"/>
-                <path d="M16 8L22 11V21L16 24L10 21V11L16 8Z" fill="url(#grad)" opacity="0.3"/>
-                <defs><linearGradient id="grad" x1="4" y1="2" x2="28" y2="30"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
-            </svg>
+    <header class="mt-header">
+        <div class="mt-title">Thetis Trading Bot</div>
+        <div id="mt-status" class="mt-status-badge offline">
+            <span class="mt-status-dot"></span><span class="mt-status-text">Offline</span>
         </div>
-        <div>
-            <h1>Thetis Trading Bot</h1>
-            <p class="subtitle">EMA Crossover · RSI Momentum</p>
-        </div>
+    </header>
+    <div class="mt-container">
+        <!-- Left panel: Market Watch -->
+        <aside class="mt-sidebar" id="mt-market-watch">
+            <h2 class="mt-panel-title">Market Watch</h2>
+            <table class="mt-watch-table" id="mt-watch-body">
+                <thead>
+                    <tr><th>Symbol</th><th>Bid</th><th>Ask</th></tr>
+                </thead>
+                <tbody>
+                    <!-- Filled dynamically (placeholder) -->
+                    <tr><td colspan="3" class="mt-empty">No data</td></tr>
+                </tbody>
+            </table>
+        </aside>
+        <!-- Main panel: Chart -->
+        <main class="mt-main">
+            <div class="mt-chart-wrapper">
+                <canvas id="mt-price-canvas"></canvas>
+            </div>
+            <div class="mt-signal-panel" id="mt-signal-panel">
+                <span id="mt-signal" class="mt-signal-display hold">—</span>
+                <div id="mt-signal-meta" class="mt-signal-meta"></div>
+            </div>
+        </main>
+        <!-- Right panel: Order Entry & Stats -->
+        <aside class="mt-sidebar" id="mt-right-panel">
+            <section class="mt-panel">
+                <h2 class="mt-panel-title">Account</h2>
+                <div class="mt-metric"><span>Cash:</span> <span id="mt-cash">$0.00</span></div>
+                <div class="mt-metric"><span>Buying Power:</span> <span id="mt-bp">$0.00</span></div>
+                <div class="mt-metric"><span>Trades:</span> <span id="mt-trades">0</span></div>
+                <div class="mt-metric"><span>Iter:</span> <span id="mt-iter">0</span></div>
+            </section>
+            <section class="mt-panel">
+                <h2 class="mt-panel-title">Order Entry</h2>
+                <div class="mt-form-group">
+                    <label for="mt-symbol">Symbol</label>
+                    <input type="text" id="mt-symbol" placeholder="AAPL" />
+                </div>
+                <div class="mt-form-group">
+                    <label for="mt-qty">Qty</label>
+                    <input type="number" id="mt-qty" min="1" value="1" />
+                </div>
+                <div class="mt-form-group">
+                    <label for="mt-delay">Loop Delay (s)</label>
+                    <input type="number" id="mt-delay" min="1" value="10" />
+                </div>
+                <button class="mt-btn mt-btn-start" id="mt-start-btn">Start</button>
+                <button class="mt-btn mt-btn-stop" id="mt-stop-btn" disabled>Stop</button>
+            </section>
+            <section class="mt-panel">
+                <h2 class="mt-panel-title">Trade Log</h2>
+                <div class="mt-log-count" id="mt-log-count">0 entries</div>
+                <div class="mt-log-table-wrap">
+                    <table class="mt-log-table" id="mt-log-body">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Time</th><th>Signal</th><th>Close</th><th>Action</th><th>Cash</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+        </aside>
     </div>
-    <div class="header-right">
-        <div class="status-badge" id="status-badge">
-            <span class="status-dot"></span>
-            <span class="status-text">Offline</span>
-        </div>
-        <div class="header-controls">
-            <button class="btn btn-start" id="btn-start" onclick="startBot()">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                Start
-            </button>
-            <button class="btn btn-stop" id="btn-stop" onclick="stopBot()" disabled>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                Stop
-            </button>
-        </div>
-    </div>
-</header>
-
-<!-- ─── MAIN CONTENT ─── -->
-<main id="dashboard">
-
-    <!-- Row 1: Signal + Indicators -->
-    <section class="row row-signal">
-        <div class="card card-signal" id="signal-card">
-            <div class="card-label">LIVE SIGNAL</div>
-            <div class="signal-display" id="signal-display">—</div>
-            <div class="signal-meta" id="signal-meta">Waiting for data…</div>
-        </div>
-
-        <div class="card card-indicator">
-            <div class="card-label">EMA 9 <span class="tag tag-fast">FAST</span></div>
-            <div class="indicator-value" id="ema9-value">0.0000</div>
-            <div class="indicator-bar"><div class="indicator-fill ema9-fill" id="ema9-bar"></div></div>
-        </div>
-
-        <div class="card card-indicator">
-            <div class="card-label">EMA 21 <span class="tag tag-slow">SLOW</span></div>
-            <div class="indicator-value" id="ema21-value">0.0000</div>
-            <div class="indicator-bar"><div class="indicator-fill ema21-fill" id="ema21-bar"></div></div>
-        </div>
-
-        <div class="card card-indicator card-rsi">
-            <div class="card-label">RSI 14</div>
-            <div class="indicator-value" id="rsi-value">0.00</div>
-            <div class="rsi-gauge">
-                <div class="rsi-zone rsi-oversold"></div>
-                <div class="rsi-zone rsi-neutral"></div>
-                <div class="rsi-zone rsi-overbought"></div>
-                <div class="rsi-needle" id="rsi-needle"></div>
-            </div>
-            <div class="rsi-labels">
-                <span>0</span><span>30</span><span>50</span><span>70</span><span>100</span>
-            </div>
-        </div>
-    </section>
-
-    <!-- Row 2: Account Overview -->
-    <section class="row row-account">
-        <div class="card card-metric">
-            <div class="card-label">Available Cash</div>
-            <div class="metric-value" id="cash-value">$100,000.00</div>
-            <div class="metric-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>
-            </div>
-        </div>
-        <div class="card card-metric">
-            <div class="card-label">Buying Power</div>
-            <div class="metric-value" id="bp-value">$400,000.00</div>
-            <div class="metric-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
-            </div>
-        </div>
-        <div class="card card-metric">
-            <div class="card-label">Total Trades</div>
-            <div class="metric-value" id="trades-value">0</div>
-            <div class="metric-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22,7 13.5,15.5 8.5,10.5 2,17"/><polyline points="16,7 22,7 22,13"/></svg>
-            </div>
-        </div>
-        <div class="card card-metric">
-            <div class="card-label">Iterations</div>
-            <div class="metric-value" id="iter-value">0</div>
-            <div class="metric-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/><polyline points="22,2 22,8 16,8"/></svg>
-            </div>
-        </div>
-    </section>
-
-    <!-- Row 3: Trade Breakdown + Positions -->
-    <section class="row row-details">
-        <div class="card card-breakdown">
-            <div class="card-label">Trade Breakdown</div>
-            <div class="breakdown-grid">
-                <div class="breakdown-item buy-item">
-                    <div class="breakdown-count" id="buy-count">0</div>
-                    <div class="breakdown-label">BUY Orders</div>
-                </div>
-                <div class="breakdown-divider"></div>
-                <div class="breakdown-item sell-item">
-                    <div class="breakdown-count" id="sell-count">0</div>
-                    <div class="breakdown-label">SELL Orders</div>
-                </div>
-                <div class="breakdown-divider"></div>
-                <div class="breakdown-item hold-item">
-                    <div class="breakdown-count" id="hold-count">0</div>
-                    <div class="breakdown-label">HOLD Signals</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card card-positions">
-            <div class="card-label">Open Positions</div>
-            <div class="positions-table-wrap" id="positions-wrap">
-                <div class="empty-state" id="positions-empty">No open positions</div>
-                <table class="positions-table" id="positions-table" style="display:none">
-                    <thead>
-                        <tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>Mkt Value</th><th>P&L</th></tr>
-                    </thead>
-                    <tbody id="positions-body"></tbody>
-                </table>
-            </div>
-        </div>
-    </section>
-
-    <!-- Row 4: Price Chart -->
-    <section class="row row-chart">
-        <div class="card card-chart">
-            <div class="card-label">Price & Signal History</div>
-            <canvas id="price-canvas" height="180"></canvas>
-        </div>
-    </section>
-
-    <!-- Row 5: Trade Log -->
-    <section class="row row-log">
-        <div class="card card-log">
-            <div class="card-header-row">
-                <div class="card-label">Trade Log</div>
-                <span class="log-count" id="log-count">0 entries</span>
-            </div>
-            <div class="log-table-wrap" id="log-wrap">
-                <table class="log-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Timestamp</th>
-                            <th>Signal</th>
-                            <th>Close</th>
-                            <th>EMA9</th>
-                            <th>EMA21</th>
-                            <th>RSI</th>
-                            <th>Action</th>
-                            <th>Cash</th>
-                        </tr>
-                    </thead>
-                    <tbody id="log-body"></tbody>
-                </table>
-            </div>
-        </div>
-    </section>
-
-    <!-- Row 6: Configuration -->
-    <section class="row row-config">
-        <div class="card card-config">
-            <div class="card-label">Configuration</div>
-            <div class="config-grid">
-                <div class="config-field">
-                    <label for="cfg-symbol">Symbol</label>
-                    <input type="text" id="cfg-symbol" value="AAPL" />
-                </div>
-                <div class="config-field">
-                    <label for="cfg-qty">Trade Qty</label>
-                    <input type="number" id="cfg-qty" value="1" min="0.01" step="0.01" />
-                </div>
-                <div class="config-field">
-                    <label for="cfg-delay">Loop Delay (s)</label>
-                    <input type="number" id="cfg-delay" value="10" min="1" />
-                </div>
-                <div class="config-field config-field-btn">
-                    <label>&nbsp;</label>
-                    <button class="btn btn-apply" onclick="applyConfig()">Apply & Start</button>
-                </div>
-            </div>
-        </div>
-    </section>
-
-</main>
-
-<!-- ─── FOOTER ─── -->
-<footer>
-    <p>Thetis Trading Bot — Paper Trading Mode · Built with Python + Flask</p>
-</footer>
-
-<script src="/static/app.js"></script>
+    <script src="/static/app.js"></script>
 </body>
 </html>

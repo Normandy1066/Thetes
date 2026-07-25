@@ -306,7 +306,6 @@ $btnStart.addEventListener('click', async () => {
   } catch(e) {
     console.error('Failed to start', e);
   }
-  $btnStart.textContent = 'START AUTOMATION';
   startPolling();
 });
 $btnStop.addEventListener('click', () => post('/api/stop'));
@@ -326,7 +325,10 @@ function render(s){
   const running = s.running === true;
   $status.className = `status-indicator ${running ? 'status-online' : 'status-offline'}`;
   $statusTxt.textContent = running ? 'Connected' : 'Disconnected';
+  
   $btnStart.disabled = running;
+  $btnStart.textContent = running ? 'AUTOMATION RUNNING' : 'START AUTOMATION';
+  
   $btnStop.disabled = !running;
 
   // Portfolio

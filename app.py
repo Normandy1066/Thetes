@@ -61,24 +61,30 @@ def api_state():
 @app.route("/api/start", methods=["POST"])
 def api_start():
     """Start the trading bot loop."""
-    state = engine.get_state()
-    if state.status == BotStatus.RUNNING:
-        return jsonify({"status": "already_running"})
+    try:
+        print("API START CALLED")
+        state = engine.get_state()
+        if state.status == BotStatus.RUNNING:
+            return jsonify({"status": "already_running"}), 200
 
-    # Parse potential runtime overrides from frontend
-    data = request.get_json(silent=True) or {}
-    symbol = data.get("symbol")
-    
-    trade_qty = None
-    if "trade_qty" in data:
-        trade_qty = float(data["trade_qty"])
+        # Parse potential runtime overrides from frontend
+        data = request.get_json(silent=True) or {}
+        symbol = data.get("symbol")
+        
+        trade_qty = None
+        if "trade_qty" in data:
+            trade_qty = float(data["trade_qty"])
 
-    loop_delay = None
-    if "loop_delay" in data:
-        loop_delay = int(data["loop_delay"])
+        loop_delay = None
+        if "loop_delay" in data:
+            loop_delay = int(data["loop_delay"])
 
-    engine.start(symbol=symbol, trade_qty=trade_qty, loop_delay=loop_delay)
-    return jsonify({"status": "started"})
+        engine.start(symbol=symbol, trade_qty=trade_qty, loop_delay=loop_delay)
+        return jsonify({"status": "started"}), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/stop", methods=["POST"])

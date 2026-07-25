@@ -40,7 +40,13 @@ html,body { height:100%; font-family: var(--font-sans); background: var(--bg-dar
 .mt-container { display:grid; grid-template-columns:250px 1fr 300px; height:calc(100% - 50px); }
 .mt-sidebar { background:var(--bg-panel); padding:12px; overflow-y:auto; border-right:1px solid #444; }
 .mt-sidebar:last-child { border-left:1px solid #444; }
-.mt-main { display:flex; flex-direction:column; background:var(--bg-dark); }
+.mt-main {
+    display:flex;
+    flex-direction:column;
+    background:var(--bg-dark);
+    flex:1;
+    height:100%;
+}
 .mt-chart-wrapper { flex:1; position:relative; }
 #mt-price-canvas { width:100%; height:100%; display:block; }
 
@@ -97,3 +103,24 @@ html,body { height:100%; font-family: var(--font-sans); background: var(--bg-dar
     .mt-sidebar { display:none; }
     .mt-main { height:calc(100% - 50px); }
 }
+
+/* Signal pill styles */
+.signal-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.75rem;
+    margin-left: 4px;
+}
+.signal-pill.buy { background: rgba(40,167,69,0.15); color: var(--accent-green); }
+.signal-pill.sell { background: rgba(220,53,69,0.15); color: var(--accent-red); }
+.signal-pill.hold { background: rgba(100,116,139,0.12); color: var(--text-muted); }
+
+/* Flash animation for signal panel */
+@keyframes mt-signal-flash {
+    0% { box-shadow: 0 0 0 0 rgba(99,102,241,0.4); }
+    70% { box-shadow: 0 0 0 12px rgba(99,102,241,0); }
+    100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+}
+.mt-signal-panel.flash { animation: mt-signal-flash 0.8s ease; }

@@ -316,29 +316,28 @@ async function fetchState(){
 }
 
 function render(s){
-  const running = s.status === 'running';
+  const running = s.running === true;
   $status.className = `status-indicator ${running ? 'status-online' : 'status-offline'}`;
   $statusTxt.textContent = running ? 'Connected' : 'Disconnected';
   $btnStart.disabled = running;
   $btnStop.disabled = !running;
 
   // Portfolio
-  const cash = s.account?.cash || 0;
-  const bp = s.account?.buying_power || 0;
+  const cash = s.cash || 0;
+  const bp = s.buying_power || 0;
   $valCash.textContent = fmt$(cash);
   $valBp.textContent = fmt$(bp);
   $valTrades.textContent = s.total_trades || 0;
-  $chartSym.textContent = s.config?.trading_symbol || 'AAPL';
+  $chartSym.textContent = s.symbol || 'AAPL';
 
   // Middle Section
-  const ind = s.market?.indicators || {};
-  const close = s.market?.last_close || 0;
-  const sig = (s.market?.last_signal || 'HOLD').toUpperCase();
+  const close = s.last_close || 0;
+  const sig = (s.last_signal || 'HOLD').toUpperCase();
   
   $valClose.textContent = close ? fmt$(close) : '$0.00';
-  $valEma9.textContent = ind.ema9 ? ind.ema9.toFixed(2) : '0.00';
-  $valEma21.textContent = ind.ema21 ? ind.ema21.toFixed(2) : '0.00';
-  $valRsi.textContent = ind.rsi ? ind.rsi.toFixed(2) : '0.00';
+  $valEma9.textContent = s.last_ema9 ? s.last_ema9.toFixed(2) : '0.00';
+  $valEma21.textContent = s.last_ema21 ? s.last_ema21.toFixed(2) : '0.00';
+  $valRsi.textContent = s.last_rsi ? s.last_rsi.toFixed(2) : '0.00';
   
   if (sig === 'BUY') {
     $botAction.textContent = 'BUYING';

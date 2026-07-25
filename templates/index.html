@@ -299,7 +299,14 @@ async function post(u,d={}){ return fetch(u,{method:'POST',headers:{'Content-Typ
 
 // CONTROLS
 $btnStart.addEventListener('click', async () => {
-  await post('/api/start', { symbol: 'AAPL', trade_qty: 1, loop_delay: 10 });
+  $btnStart.disabled = true;
+  $btnStart.textContent = 'CONNECTING...';
+  try {
+    await post('/api/start', { symbol: 'AAPL', trade_qty: 1, loop_delay: 10 });
+  } catch(e) {
+    console.error('Failed to start', e);
+  }
+  $btnStart.textContent = 'START AUTOMATION';
   startPolling();
 });
 $btnStop.addEventListener('click', () => post('/api/stop'));

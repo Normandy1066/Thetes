@@ -15,6 +15,7 @@ from thetes.config import Config
 from thetes.mock_broker import MockBroker
 from thetes.alpaca_broker import AlpacaBroker
 from thetes.mock_data import MockDataProvider
+from thetes.alpaca_data import AlpacaDataProvider
 from thetes.engine import TradingEngine
 
 # 1. Initialize configuration and logging
@@ -22,15 +23,15 @@ config = Config.from_env()
 config.configure_logging()
 logger = logging.getLogger(__name__)
 
-# 2. Instantiate dependencies
+# Use AlpacaBroker and AlpacaDataProvider if credentials are valid, otherwise fallback to mock
 if config.is_mock_mode():
-    logger.info("Using MockBroker (no valid Alpaca credentials provided).")
+    logger.info("Using MockBroker and MockDataProvider (no valid Alpaca credentials provided).")
     broker = MockBroker()
+    data_provider = MockDataProvider()
 else:
-    logger.info("Using AlpacaBroker with paper-trading endpoint.")
+    logger.info("Using AlpacaBroker and AlpacaDataProvider with paper-trading endpoint.")
     broker = AlpacaBroker(config)
-
-data_provider = MockDataProvider()
+    data_provider = AlpacaDataProvider(config)
 
 # 3. Create the trading engine
 engine = TradingEngine(config, broker, data_provider)

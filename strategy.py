@@ -1,13 +1,102 @@
-'''strategy.py
+"""strategy.py
 
-Algorithmic day‑trading signal generator.
+Algorithmic day-trading signal generator.
 
-Provides a single public function `generate_signals(df)` that calculates a fast (9‑period) EMA,
-slow (21‑period) EMA, and a 14‑period RSI using the `pandas_ta` library.  The most recent candle
-is examined for a bullish EMA crossover combined with an RSI filter (40‑70) to emit a **BUY**
-signal, a bearish EMA crossover to emit a **SELL** signal, otherwise **HOLD**.
+Provides a single public function ``generate_signals(df)`` that calculates a
+fast (9-period) EMA, slow (21-period) EMA, and a 14-period RSI.  The most
+recent candle is examined for a bullish EMA crossover combined with an RSI
+filter (40-70) to emit a **BUY** signal, a bearish EMA crossover to emit a
+**SELL** signal, otherwise **HOLD**.
 
-The function returns a dictionary containing the signal string and the exact latest values of
-the three indicators for logging or reporting purposes.
-'''\n\nimport pandas as pd\nimport pandas_ta as ta\n\n\ndef _validate_dataframe(df: pd.DataFrame) -> None:\n    """Validate input DataFrame.\n\n    Raises:\n        ValueError: If `df` is empty, missing required columns, or lacks enough rows for the 21‑period EMA.\n    """\n    required_cols = {"open", "high", "low", "close", "volume"}\n    if df.empty:\n        raise ValueError("Input DataFrame is empty.")\n    missing = required_cols - set(df.columns)\n    if missing:\n        raise ValueError(f"DataFrame missing required columns: {missing}")\n    # At least 21 rows are needed for the longest EMA window (21 periods).\n    if len(df) < 21:\n        raise ValueError("DataFrame must contain at least 21 rows for EMA calculation.")\n\n\ndef generate_signals(df: pd.DataFrame) -> dict:\n    """Generate a trading signal from 5‑minute candlestick data.\n\n    Parameters\n    ----------\n    df : pandas.DataFrame\n        Historical candlestick data with columns: ``open``, ``high``, ``low``, ``close``,
-        and ``volume``.  The DataFrame should be ordered chronologically, newest row last.\n\n    Returns\n    -------\n    dict\n        ``{"signal": str, "ema9": float, "ema21": float, "rsi": float}`` where ``signal`` is\n        one of ``"BUY"``, ``"SELL"`` or ``"HOLD"``.\n\n    Notes\n    -----\n    * Bullish EMA crossover (9‑EMA crossing above 21‑EMA) **and** RSI in the inclusive range\n      ``[40, 70]`` → **BUY**.\n    * Bearish EMA crossover (9‑EMA crossing below 21‑EMA) → **SELL** (RSI ignored).\n    * All other states → **HOLD**.\n    """\n    # 1️⃣ Validate input\n    _validate_dataframe(df)\n\n    # 2️⃣ Compute indicators using pandas_ta\n    df["EMA9"] = ta.ema(df["close"], length=9)\n    df["EMA21"] = ta.ema(df["close"], length=21)\n    df["RSI14"] = ta.rsi(df["close"], length=14)\n\n    # 3️⃣ Grab latest and previous rows for crossover detection\n    latest = df.iloc[-1]\n    prev = df.iloc[-2]\n\n    ema9_latest = latest["EMA9"]\n    ema21_latest = latest["EMA21"]\n    rsi_latest = latest["RSI14"]\n\n    ema9_prev = prev["EMA9"]\n    ema21_prev = prev["EMA21"]\n\n    # 4️⃣ Decision logic\n    signal = "HOLD"\n    # Bullish crossover + RSI filter\n    if ema9_prev <= ema21_prev and ema9_latest > ema21_latest and 40 <= rsi_latest <= 70:\n        signal = "BUY"\n    # Bearish crossover (no RSI condition)\n    elif ema9_prev >= ema21_prev and ema9_latest < ema21_latest:\n        signal = "SELL"\n\n    # 5️⃣ Return values rounded for readability\n    return {\n        "signal": signal,\n        "ema9": round(float(ema9_latest), 4),\n        "ema21": round(float(ema21_latest), 4),\n        "rsi": round(float(rsi_latest), 2),\n    }\n\n# Example usage (remove when integrating into production):\n# if __name__ == "__main__":\n#     import numpy as np\n#     np.random.seed(0)\n#     data = {\n#         "open": np.random.rand(30),\n#         "high": np.random.rand(30),\n#         "low": np.random.rand(30),\n#         "close": np.random.rand(30),\n#         "volume": np.random.rand(30),\n#     }\n#     df_demo = pd.DataFrame(data)\n#     print(generate_signals(df_demo))\n
+The function returns a tuple of (signal_string, indicator_dict).
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+import numpy as np
+from typing import Tuple, Dict
+
+
+def _validate_dataframe(df: pd.DataFrame) -> None:
+    """Validate input DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If ``df`` is empty, missing required columns, or lacks enough rows
+        for the 21-period EMA.
+    """
+    required_cols = {"open", "high", "low", "close", "volume"}
+    if df.empty:
+        raise ValueError("Input DataFrame is empty.")
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame missing required columns: {missing}")
+    if len(df) < 21:
+        raise ValueError("DataFrame must contain at least 21 rows for EMA calculation.")
+
+
+def _ema(series: pd.Series, span: int) -> pd.Series:
+    """Compute Exponential Moving Average manually."""
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Compute Relative Strength Index manually."""
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def generate_signals(df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
+    """Generate a trading signal from 5-minute candlestick data.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Historical candlestick data with columns: ``open``, ``high``,
+        ``low``, ``close``, and ``volume``.  Ordered chronologically,
+        newest row last.
+
+    Returns
+    -------
+    tuple[str, dict]
+        A tuple of (signal, indicators) where signal is one of
+        ``'BUY'``, ``'SELL'``, or ``'HOLD'`` and indicators is
+        ``{'ema9': float, 'ema21': float, 'rsi': float}``.
+    """
+    _validate_dataframe(df)
+
+    # Compute indicators
+    close = df["close"]
+    ema9  = _ema(close, 9)
+    ema21 = _ema(close, 21)
+    rsi14 = _rsi(close, 14)
+
+    # Latest & previous values for crossover detection
+    ema9_latest  = float(ema9.iloc[-1])
+    ema21_latest = float(ema21.iloc[-1])
+    rsi_latest   = float(rsi14.iloc[-1])
+
+    ema9_prev  = float(ema9.iloc[-2])
+    ema21_prev = float(ema21.iloc[-2])
+
+    # Decision logic
+    signal = "HOLD"
+    if ema9_prev <= ema21_prev and ema9_latest > ema21_latest and 40 <= rsi_latest <= 70:
+        signal = "BUY"
+    elif ema9_prev >= ema21_prev and ema9_latest < ema21_latest:
+        signal = "SELL"
+
+    indicators = {
+        "ema9":  round(ema9_latest, 4),
+        "ema21": round(ema21_latest, 4),
+        "rsi":   round(rsi_latest, 2),
+    }
+
+    return signal, indicators

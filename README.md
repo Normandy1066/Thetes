@@ -1,0 +1,2 @@
+# Thetes
+a trading bot

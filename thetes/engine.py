@@ -17,7 +17,7 @@ from thetes.data_provider import MarketDataProvider
 from thetes.enums import BotStatus, Signal
 from thetes.models import BotState, MarketState, TradeLogEntry, IndicatorValues
 from thetes.risk_manager import RiskManager
-from thetes.strategy import generate_signals
+from thetes.strategy import IndicatorCache, generate_signals_cached
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ class TradingEngine:
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._indicator_cache: IndicatorCache | None = None
 
         # Setup initial state
         with self._state_lock:
@@ -80,6 +81,8 @@ class TradingEngine:
             self._state.trade_log.clear()
             self._state.price_history.clear()
             self._state.signal_history.clear()
+            self._indicator_cache = None
+            self.risk_manager.reset()
 
             if initial_account:
                 self._state.account = initial_account
@@ -154,7 +157,9 @@ class TradingEngine:
         indicators_val = IndicatorValues()
         if df is not None and not df.empty:
             try:
-                signal_val, indicators_val = generate_signals(df)
+                signal_val, indicators_val, self._indicator_cache = generate_signals_cached(
+                    df, self._indicator_cache
+                )
                 with self._state_lock:
                     self._state.market.last_signal = signal_val
                     self._state.market.indicators = indicators_val

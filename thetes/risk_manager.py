@@ -5,7 +5,7 @@ import pandas as pd
 from thetes.broker import Broker
 from thetes.config import Config
 from thetes.enums import Signal
-from thetes.indicators import atr
+from thetes.indicators import AtrState, atr, atr_incremental, atr_state_from_series
 from thetes.models import RiskDecision
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,10 @@ class RiskManager:
     def __init__(self, config: Config, broker: Broker) -> None:
         self._config = config
         self._broker = broker
+        self._atr_cache: AtrState | None = None
+
+    def reset(self) -> None:
+        self._atr_cache = None
 
     def evaluate(self, signal: Signal, price: float, df: pd.DataFrame, qty: float) -> RiskDecision:
         if signal == Signal.HOLD:
@@ -51,5 +55,17 @@ class RiskManager:
         )
 
     def _compute_atr(self, df: pd.DataFrame) -> float:
+        if self._atr_cache is not None and len(df) >= 2:
+            if float(df["close"].iloc[-2]) == self._atr_cache.prev_close:
+                high = float(df["high"].iloc[-1])
+                low = float(df["low"].iloc[-1])
+                close = float(df["close"].iloc[-1])
+                atr_val, self._atr_cache = atr_incremental(high, low, close, self._atr_cache)
+                return atr_val
+
         atr_series = atr(df["high"], df["low"], df["close"], self._config.atr_period)
-        return float(atr_series.iloc[-1])
+        atr_val = float(atr_series.iloc[-1])
+        self._atr_cache = atr_state_from_series(
+            df["high"], df["low"], df["close"], self._config.atr_period
+        )
+        return atr_val

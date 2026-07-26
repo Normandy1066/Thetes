@@ -45,11 +45,18 @@ class TradingEngine:
                 loop_delay=config.loop_delay_seconds,
             )
 
-    def start(self, symbol: str | None = None, trade_qty: float | None = None, loop_delay: int | None = None) -> None:
+    def start(self, symbol: Optional[str] = None, trade_qty: Optional[float] = None, loop_delay: Optional[int] = None) -> None:
         """Start the background bot thread.
 
-        Optionally overrides the current symbol, trade quantity, or loop delay.
+        Optionally override the target symbol, trade quantity, or loop delay on start.
         """
+        # Fetch account snapshot outside the lock to prevent deadlocks during network latency
+        initial_account = None
+        try:
+            initial_account = self.broker.get_account()
+        except Exception as exc:
+            logger.error("Failed to retrieve initial account balance: %s", exc)
+
         with self._state_lock:
             if self._state.status == BotStatus.RUNNING:
                 logger.warning("Attempted to start engine, but it is already running.")
@@ -74,11 +81,8 @@ class TradingEngine:
             self._state.price_history.clear()
             self._state.signal_history.clear()
 
-            # Refresh account snapshot at start
-            try:
-                self._state.account = self.broker.get_account()
-            except Exception as exc:
-                logger.error("Failed to retrieve initial account balance: %s", exc)
+            if initial_account:
+                self._state.account = initial_account
 
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True)

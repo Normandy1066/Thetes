@@ -64,9 +64,21 @@ class IndicatorValues:
     ema9: float = 0.0
     ema21: float = 0.0
     rsi: float = 0.0
+    ema_trend: float = 0.0
+    atr: float = 0.0
+    adx: float = 0.0
+    volume_ratio: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
-        return {"ema9": self.ema9, "ema21": self.ema21, "rsi": self.rsi}
+        return {
+            "ema9": self.ema9,
+            "ema21": self.ema21,
+            "rsi": self.rsi,
+            "ema_trend": self.ema_trend,
+            "atr": self.atr,
+            "adx": self.adx,
+            "volume_ratio": self.volume_ratio,
+        }
 
 
 @dataclass
@@ -105,6 +117,10 @@ class TradeLogEntry:
             d["ema9"] = self.indicators.ema9
             d["ema21"] = self.indicators.ema21
             d["rsi"] = self.indicators.rsi
+            d["ema_trend"] = self.indicators.ema_trend
+            d["atr"] = self.indicators.atr
+            d["adx"] = self.indicators.adx
+            d["volume_ratio"] = self.indicators.volume_ratio
         if self.action is not None:
             d["action"] = self.action
         if self.error is not None:
@@ -185,6 +201,10 @@ class BotState:
             "last_ema9": self.market.indicators.ema9,
             "last_ema21": self.market.indicators.ema21,
             "last_rsi": self.market.indicators.rsi,
+            "last_ema_trend": self.market.indicators.ema_trend,
+            "last_atr": self.market.indicators.atr,
+            "last_adx": self.market.indicators.adx,
+            "last_volume_ratio": self.market.indicators.volume_ratio,
             "last_close": self.market.last_close,
             "cash": self.account.cash,
             "buying_power": self.account.buying_power,

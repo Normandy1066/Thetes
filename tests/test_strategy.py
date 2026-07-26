@@ -23,18 +23,18 @@ def test_validate_dataframe():
         "close": [100.0] * 10,
         "volume": [1000] * 10
     })
-    with pytest.raises(ValueError, match="must contain at least 21 rows"):
+    with pytest.raises(ValueError, match="must contain at least"):
         _validate_dataframe(df_short)
 
 
 def test_generate_signals_hold():
     # Constant data should generate HOLD signal
     df = pd.DataFrame({
-        "open": [100.0] * 30,
-        "high": [100.0] * 30,
-        "low": [100.0] * 30,
-        "close": [100.0] * 30,
-        "volume": [1000] * 30
+        "open": [100.0] * 60,
+        "high": [100.0] * 60,
+        "low": [100.0] * 60,
+        "close": [100.0] * 60,
+        "volume": [1000] * 60
     })
     sig, ind = generate_signals(df)
     assert sig == Signal.HOLD
@@ -43,20 +43,22 @@ def test_generate_signals_hold():
 
 
 def test_generate_signals_buy_crossover():
-    # Construct a series where ema9 crosses above ema21 and RSI is neutral (~50)
-    # Fast EMA starts below slow EMA, then rises quickly
-    close_prices = [100.0] * 20 + [102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0]
-    
+    n_flat, n_trend = 30, 30
+    flat_prices = [100.0] * n_flat
+    trend = [100.0 + i * 1.0 for i in range(n_trend)]
+    close_prices = flat_prices + trend
+    high_prices = [p + 1.5 for p in close_prices]
+    low_prices = [p - 1.5 for p in close_prices]
+    volume = [1000] * n_flat + [2000] * (n_trend - 5) + [4000] * 5
+
     df = pd.DataFrame({
         "open": close_prices,
-        "high": [p + 2 for p in close_prices],
-        "low": [p - 2 for p in close_prices],
+        "high": high_prices,
+        "low": low_prices,
         "close": close_prices,
-        "volume": [1000] * len(close_prices)
+        "volume": volume,
     })
-    
+
     sig, ind = generate_signals(df)
-    # We should have a crossover (EMA9 > EMA21) and RSI in range [40, 70] or similar.
-    # Let's see if it triggers. If the crossover happened, it might trigger BUY or HOLD.
-    # (Since this is a unit test, we just want to ensure it completes successfully or we can verify crossover state)
     assert sig in {Signal.BUY, Signal.HOLD, Signal.SELL}
+    assert ind.ema_trend > 0

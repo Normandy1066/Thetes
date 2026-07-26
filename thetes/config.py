@@ -33,6 +33,19 @@ class Config:
 
     log_level: str = "INFO"
 
+    # Strategy parameters
+    ema_fast: int = 9
+    ema_slow: int = 21
+    ema_trend: int = 50
+    rsi_period: int = 14
+    rsi_oversold: int = 30
+    rsi_overbought: int = 70
+    adx_period: int = 14
+    adx_threshold: int = 25
+    volume_ma_period: int = 20
+    volume_ratio_min: float = 1.0
+    cooldown_candles: int = 3
+
     # Risk management
     risk_per_trade_pct: float = 1.0
     atr_period: int = 14

@@ -111,6 +111,90 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
     return tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
 
 
+@dataclass
+class AdxState:
+    smoothed_tr: float
+    smoothed_plus_dm: float
+    smoothed_minus_dm: float
+    adx: float
+    prev_high: float
+    prev_low: float
+    prev_close: float
+    period: int
+
+
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    adx_series, _ = _adx_full(high, low, close, period)
+    return adx_series
+
+
+def adx_incremental(high: float, low: float, close: float, state: AdxState) -> tuple[float, AdxState]:
+    tr = max(high - low, abs(high - state.prev_close), abs(low - state.prev_close))
+    up_move = high - state.prev_high
+    down_move = state.prev_low - low
+    plus_dm = max(up_move, 0.0) if up_move > down_move and up_move > 0 else 0.0
+    minus_dm = max(down_move, 0.0) if down_move > up_move and down_move > 0 else 0.0
+    smoothed_tr = ((state.period - 1) * state.smoothed_tr + tr) / state.period
+    smoothed_plus_dm = ((state.period - 1) * state.smoothed_plus_dm + plus_dm) / state.period
+    smoothed_minus_dm = ((state.period - 1) * state.smoothed_minus_dm + minus_dm) / state.period
+    pdi = 100.0 * smoothed_plus_dm / smoothed_tr if smoothed_tr > 0 else 0.0
+    mdi = 100.0 * smoothed_minus_dm / smoothed_tr if smoothed_tr > 0 else 0.0
+    dx = 100.0 * abs(pdi - mdi) / (pdi + mdi) if (pdi + mdi) > 0 else 0.0
+    adx_val = ((state.period - 1) * state.adx + dx) / state.period
+    return adx_val, AdxState(
+        smoothed_tr=smoothed_tr,
+        smoothed_plus_dm=smoothed_plus_dm,
+        smoothed_minus_dm=smoothed_minus_dm,
+        adx=adx_val,
+        prev_high=high,
+        prev_low=low,
+        prev_close=close,
+        period=state.period,
+    )
+
+
+def adx_state_from_series(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> AdxState:
+    _, state = _adx_full(high, low, close, period)
+    return state
+
+
+def _adx_full(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[pd.Series, AdxState]:
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    up_move = high - prev_high
+    down_move = prev_low - low
+    plus_dm = pd.Series(0.0, index=high.index)
+    minus_dm = pd.Series(0.0, index=low.index)
+    pos = (up_move > down_move) & (up_move > 0)
+    neg = (down_move > up_move) & (down_move > 0)
+    plus_dm[pos] = up_move[pos]
+    minus_dm[neg] = down_move[neg]
+    st = tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    sp = plus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    sm = minus_dm.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    pdi = 100.0 * sp / st
+    mdi = 100.0 * sm / st
+    dx = 100.0 * (pdi - mdi).abs() / (pdi + mdi)
+    adx_series = dx.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    state = AdxState(
+        smoothed_tr=float(st.iloc[-1]),
+        smoothed_plus_dm=float(sp.iloc[-1]),
+        smoothed_minus_dm=float(sm.iloc[-1]),
+        adx=float(adx_series.iloc[-1]),
+        prev_high=float(high.iloc[-1]),
+        prev_low=float(low.iloc[-1]),
+        prev_close=float(close.iloc[-1]),
+        period=period,
+    )
+    return adx_series, state
+
+
+def volume_sma(volume: pd.Series, period: int = 20) -> pd.Series:
+    return volume.rolling(window=period).mean()
+
+
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """Compute Relative Strength Index.
 

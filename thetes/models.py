@@ -125,6 +125,14 @@ MAX_HISTORY_ENTRIES = 100
 
 
 @dataclass
+class RiskDecision:
+    position_size: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    is_allowed: bool = False
+
+
+@dataclass
 class BotState:
     """Complete state of the trading bot, owned by TradingEngine."""
 

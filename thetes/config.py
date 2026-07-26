@@ -33,6 +33,13 @@ class Config:
 
     log_level: str = "INFO"
 
+    # Risk management
+    risk_per_trade_pct: float = 1.0
+    atr_period: int = 14
+    atr_stop_multiple: float = 2.0
+    atr_take_profit_multiple: float = 3.0
+    max_position_size_pct: float = 100.0
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
@@ -56,6 +63,11 @@ class Config:
             loop_delay_seconds=int(os.getenv("LOOP_DELAY_SECONDS", "10")),
             max_iterations=max_iterations,
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            risk_per_trade_pct=float(os.getenv("RISK_PER_TRADE_PCT", "1.0")),
+            atr_period=int(os.getenv("ATR_PERIOD", "14")),
+            atr_stop_multiple=float(os.getenv("ATR_STOP_MULTIPLE", "2.0")),
+            atr_take_profit_multiple=float(os.getenv("ATR_TAKE_PROFIT_MULTIPLE", "3.0")),
+            max_position_size_pct=float(os.getenv("MAX_POSITION_SIZE_PCT", "100.0")),
         )
 
     # ------------------------------------------------------------------

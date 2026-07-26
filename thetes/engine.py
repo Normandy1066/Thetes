@@ -16,6 +16,7 @@ from thetes.broker import Broker
 from thetes.data_provider import MarketDataProvider
 from thetes.enums import BotStatus, Signal
 from thetes.models import BotState, MarketState, TradeLogEntry, IndicatorValues
+from thetes.risk_manager import RiskManager
 from thetes.strategy import generate_signals
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,11 @@ logger = logging.getLogger(__name__)
 class TradingEngine:
     """Manages the lifecycle, background thread, and state of the trading bot."""
 
-    def __init__(self, config: Config, broker: Broker, data_provider: MarketDataProvider) -> None:
+    def __init__(self, config: Config, broker: Broker, data_provider: MarketDataProvider, risk_manager: RiskManager | None = None) -> None:
         self.config = config
         self.broker = broker
         self.data_provider = data_provider
+        self.risk_manager = risk_manager or RiskManager(config, broker)
 
         # Thread synchronization
         self._state_lock = threading.Lock()
@@ -159,11 +161,16 @@ class TradingEngine:
                 entry.error = f"Signal error: {exc}"
                 logger.error("Error generating signal: %s", exc)
 
-        # Step 3: Order Execution
+        # Step 3: Risk check
+        risk_decision = None
+        if df is not None and not df.empty and last_close > 0:
+            risk_decision = self.risk_manager.evaluate(signal_val, last_close, df, qty)
+
+        # Step 4: Order Execution
         action = "HOLD"
-        if signal_val == Signal.BUY and df is not None and not df.empty:
+        if signal_val == Signal.BUY and df is not None and not df.empty and risk_decision and risk_decision.is_allowed:
             try:
-                self.broker.buy(symbol, qty, price=last_close)
+                self.broker.buy(symbol, risk_decision.position_size, price=last_close)
                 action = "BUY ORDER PLACED"
                 with self._state_lock:
                     self._state.buy_count += 1
@@ -171,9 +178,9 @@ class TradingEngine:
             except Exception as exc:
                 action = f"BUY FAILED: {exc}"
                 logger.error("Buy order failed for %s: %s", symbol, exc)
-        elif signal_val == Signal.SELL and df is not None and not df.empty:
+        elif signal_val == Signal.SELL and df is not None and not df.empty and risk_decision and risk_decision.is_allowed:
             try:
-                self.broker.sell(symbol, qty, price=last_close)
+                self.broker.sell(symbol, risk_decision.position_size, price=last_close)
                 action = "SELL ORDER PLACED"
                 with self._state_lock:
                     self._state.sell_count += 1
@@ -184,7 +191,7 @@ class TradingEngine:
 
         entry.action = action
 
-        # Step 4: Account Snapshot
+        # Step 5: Account Snapshot
         try:
             acct = self.broker.get_account()
             with self._state_lock:

@@ -27,6 +27,7 @@ class Config:
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
 
     trading_symbol: str = "AAPL"
+    trading_symbols: tuple[str, ...] = ("AAPL",)
     trade_qty: float = 1.0
     loop_delay_seconds: int = 10
     max_iterations: Optional[int] = None  # None = infinite
@@ -52,6 +53,12 @@ class Config:
     atr_stop_multiple: float = 2.0
     atr_take_profit_multiple: float = 3.0
     max_position_size_pct: float = 100.0
+    max_simultaneous_positions: int = 0  # 0 = unlimited
+    min_cash_reserve: float = 0.0
+
+    # Position sizing
+    position_sizing_mode: str = "percentage"  # "percentage" or "fixed"
+    fixed_trade_amount: float = 0.0
 
     # ------------------------------------------------------------------
     # Factory
@@ -72,6 +79,9 @@ class Config:
                 "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
             ),
             trading_symbol=os.getenv("TRADING_SYMBOL", "AAPL"),
+            trading_symbols=tuple(
+                s.strip() for s in os.getenv("TRADING_SYMBOLS", "").split(",") if s.strip()
+            ) or ("AAPL",),
             trade_qty=float(os.getenv("TRADE_QTY", "1")),
             loop_delay_seconds=int(os.getenv("LOOP_DELAY_SECONDS", "10")),
             max_iterations=max_iterations,
@@ -81,6 +91,10 @@ class Config:
             atr_stop_multiple=float(os.getenv("ATR_STOP_MULTIPLE", "2.0")),
             atr_take_profit_multiple=float(os.getenv("ATR_TAKE_PROFIT_MULTIPLE", "3.0")),
             max_position_size_pct=float(os.getenv("MAX_POSITION_SIZE_PCT", "100.0")),
+            max_simultaneous_positions=int(os.getenv("MAX_SIMULTANEOUS_POSITIONS", "0")),
+            min_cash_reserve=float(os.getenv("MIN_CASH_RESERVE", "0.0")),
+            position_sizing_mode=os.getenv("POSITION_SIZING_MODE", "percentage"),
+            fixed_trade_amount=float(os.getenv("FIXED_TRADE_AMOUNT", "0.0")),
         )
 
     # ------------------------------------------------------------------

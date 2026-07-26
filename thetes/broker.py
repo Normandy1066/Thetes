@@ -14,6 +14,14 @@ from thetes.models import AccountSnapshot, Position
 class Broker(ABC):
     """Abstract base class representing a brokerage interface."""
 
+    @property
+    def portfolio_manager(self):
+        """Return the associated ``PortfolioManager``, or ``None``.
+
+        Subclasses that maintain a ``PortfolioManager`` should override this.
+        """
+        return None
+
     @abstractmethod
     def get_account(self) -> AccountSnapshot:
         """Return the current account snapshot (balances and positions)."""

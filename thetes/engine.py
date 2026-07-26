@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import logging
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import pandas as pd
 
@@ -16,9 +16,15 @@ from thetes.broker import Broker
 from thetes.config import Config
 from thetes.data_provider import BarUpdate, MarketDataProvider
 from thetes.enums import BotStatus, Signal
-from thetes.models import AccountSnapshot, BotState, MarketState, TradeLogEntry, IndicatorValues
+from thetes.models import (
+    AccountSnapshot,
+    BotState,
+    IndicatorValues,
+    SymbolContext,
+    TradeLogEntry,
+)
 from thetes.risk_manager import RiskManager
-from thetes.strategy import IndicatorCache, generate_signals_cached
+from thetes.strategy import generate_signals_cached
 
 logger = logging.getLogger(__name__)
 
@@ -26,37 +32,50 @@ logger = logging.getLogger(__name__)
 class TradingEngine:
     """Manages the lifecycle, background thread, and state of the trading bot."""
 
-    def __init__(self, config: Config, broker: Broker, data_provider: MarketDataProvider, risk_manager: RiskManager | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        broker: Broker,
+        data_provider: MarketDataProvider,
+        risk_manager: Optional[RiskManager] = None,
+    ) -> None:
         self.config = config
         self.broker = broker
         self.data_provider = data_provider
         self.risk_manager = risk_manager or RiskManager(config, broker)
 
-        # Thread synchronization
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._indicator_cache: IndicatorCache | None = None
-        self._candle_buffer: pd.DataFrame | None = None
         self._pending_bars: list[BarUpdate] = []
         self._bar_event = threading.Event()
         self._account_cache: AccountSnapshot | None = None
 
-        # Setup initial state
+        symbols = config.trading_symbols or (config.trading_symbol,)
         with self._state_lock:
             self._state = BotState(
                 status=BotStatus.STOPPED,
-                symbol=config.trading_symbol,
+                symbol=symbols[0],
+                trading_symbols=symbols,
                 trade_qty=config.trade_qty,
                 loop_delay=config.loop_delay_seconds,
+                symbols={
+                    s: SymbolContext(symbol=s, trade_qty=config.trade_qty)
+                    for s in symbols
+                },
             )
 
-    def start(self, symbol: str | None = None, trade_qty: float | None = None, loop_delay: int | None = None) -> None:
-        """Start the background bot thread.
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-        Optionally override the target symbol, trade quantity, or loop delay on start.
-        """
-        # Fetch account snapshot outside the lock to prevent deadlocks during network latency
+    def start(
+        self,
+        symbol: Optional[str] = None,
+        trade_qty: Optional[float] = None,
+        loop_delay: Optional[int] = None,
+    ) -> None:
+        """Start the background bot thread."""
         initial_account = None
         try:
             initial_account = self.broker.get_account()
@@ -68,15 +87,15 @@ class TradingEngine:
                 logger.warning("Attempted to start engine, but it is already running.")
                 return
 
-            # Apply overrides or default to current settings
             if symbol is not None:
                 self._state.symbol = symbol
+                if symbol not in self._state.trading_symbols:
+                    self._state.trading_symbols = (symbol,)
             if trade_qty is not None:
                 self._state.trade_qty = trade_qty
             if loop_delay is not None:
                 self._state.loop_delay = loop_delay
 
-            # Reset dynamic state
             self._state.status = BotStatus.RUNNING
             self._state.iteration = 0
             self._state.total_trades = 0
@@ -86,11 +105,15 @@ class TradingEngine:
             self._state.trade_log.clear()
             self._state.price_history.clear()
             self._state.signal_history.clear()
-            self._indicator_cache = None
-            self._candle_buffer = None
             self._pending_bars.clear()
             self._bar_event.clear()
             self.risk_manager.reset()
+
+            symbols = self._state.trading_symbols
+            self._state.symbols = {
+                s: SymbolContext(symbol=s, trade_qty=self._state.trade_qty)
+                for s in symbols
+            }
 
             if initial_account:
                 self._state.account = initial_account
@@ -98,15 +121,13 @@ class TradingEngine:
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
-            logger.info("Trading engine started. Thread spawned successfully.")
+            logger.info("Trading engine started with symbols=%s", symbols)
 
     def stop(self) -> None:
-        """Stop the background bot thread."""
         with self._state_lock:
             if self._state.status == BotStatus.STOPPED:
                 logger.warning("Attempted to stop engine, but it is already stopped.")
                 return
-
             self._state.status = BotStatus.STOPPED
             self._stop_event.set()
             self._bar_event.set()
@@ -116,83 +137,122 @@ class TradingEngine:
             self._thread = None
         logger.info("Trading engine stopped.")
 
+    # ------------------------------------------------------------------
+    # State accessors
+    # ------------------------------------------------------------------
+
     def get_state(self) -> BotState:
-        """Return a snapshot of the current state under lock."""
         with self._state_lock:
+            self._sync_primary_state()
             return self._state
 
     def get_state_dict(self) -> dict:
-        """Return a JSON-serializable dictionary representation of the bot state."""
         with self._state_lock:
+            self._sync_primary_state()
             return self._state.to_api_dict()
 
+    def _sync_primary_state(self) -> None:
+        """Mirror the primary symbol into the single-symbol fields for backward compat."""
+        symbols = self._state.symbols
+        prim = self._state.primary_symbol
+        ctx = symbols.get(prim)
+        if ctx is not None:
+            self._state.market.last_close = ctx.last_close
+            self._state.market.last_signal = ctx.last_signal
+            if ctx.last_indicators is not None:
+                self._state.market.indicators = ctx.last_indicators
+
+    # ------------------------------------------------------------------
+    # Polling path (legacy / manual)
+    # ------------------------------------------------------------------
+
     def run_once(self) -> None:
-        """Execute a single iteration of the trading logic (legacy polling path).
-
-        Fetches candle data from the provider, then runs the strategy,
-        risk check, and order execution.  Kept for backward compatibility;
-        the background loop uses the event-driven path instead.
-        """
+        """Execute a single iteration for all active symbols."""
         with self._state_lock:
-            symbol = self._state.symbol
-            qty = self._state.trade_qty
+            self._state.iteration += 1
             iteration = self._state.iteration
+            symbols = list(self._state.symbols.keys())
 
-        df: pd.DataFrame | None = None
-        try:
-            if self._candle_buffer is None:
-                df = self.data_provider.get_candles(symbol, timeframe="5Min", limit=100)
-                if df.empty:
-                    logger.warning("Data fetch returned empty DataFrame for %s", symbol)
-                    return
-                self._candle_buffer = df
-                try:
-                    self._account_cache = self.broker.get_account()
-                except Exception:
-                    pass
-            else:
-                new_rows = self.data_provider.get_candles(symbol, timeframe="5Min", limit=2)
-                if not new_rows.empty:
-                    last_ts = self._candle_buffer.index[-1]
-                    fresh = new_rows[new_rows.index > last_ts]
-                    if not fresh.empty:
-                        self._candle_buffer = pd.concat([self._candle_buffer, fresh])
-                        if len(self._candle_buffer) > 100:
-                            self._candle_buffer = self._candle_buffer.iloc[-100:]
-                df = self._candle_buffer
-        except Exception as exc:
-            logger.error("Error fetching candle data: %s", exc)
+        for symbol in symbols:
+            ctx = self._symbol_ctx(symbol)
+            if ctx is None:
+                continue
+
+            try:
+                if ctx.candle_buffer is None:
+                    df = self.data_provider.get_candles(
+                        symbol, timeframe="5Min", limit=100
+                    )
+                    if df.empty:
+                        logger.warning("Data fetch returned empty DataFrame for %s", symbol)
+                        continue
+                    ctx.candle_buffer = df
+                else:
+                    new_rows = self.data_provider.get_candles(
+                        symbol, timeframe="5Min", limit=2
+                    )
+                    if not new_rows.empty:
+                        last_ts = ctx.candle_buffer.index[-1]
+                        fresh = new_rows[new_rows.index > last_ts]
+                        if not fresh.empty:
+                            ctx.candle_buffer = pd.concat(
+                                [ctx.candle_buffer, fresh]
+                            )
+                            if len(ctx.candle_buffer) > 100:
+                                ctx.candle_buffer = ctx.candle_buffer.iloc[-100:]
+            except Exception as exc:
+                logger.error("Error fetching candle data for %s: %s", symbol, exc)
+                continue
+
+            self._execute_symbol(symbol, iteration)
+
+    # ------------------------------------------------------------------
+    # Per-symbol execution
+    # ------------------------------------------------------------------
+
+    def _symbol_ctx(self, symbol: str) -> Optional[SymbolContext]:
+        return self._state.symbols.get(symbol)
+
+    def _execute_symbol(self, symbol: str, iteration: int) -> None:
+        """Run strategy, risk check, and order execution for one symbol."""
+        ctx = self._symbol_ctx(symbol)
+        if ctx is None or ctx.candle_buffer is None:
             return
 
-        self._execute(df, symbol, qty, iteration)
-
-    def _execute(self, df: pd.DataFrame, symbol: str, qty: float, iteration: int) -> None:
-        """Core strategy execution on a prepared DataFrame."""
+        df = ctx.candle_buffer
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = TradeLogEntry(timestamp=ts, iteration=iteration)
+        entry = TradeLogEntry(timestamp=ts, iteration=iteration, symbol=symbol)
 
         last_close = float(df["close"].iloc[-1])
         entry.close_price = round(last_close, 2)
 
-        # Signal
+        # --- Signal ---
         signal_val = Signal.HOLD
         indicators_val = IndicatorValues()
         try:
-            signal_val, indicators_val, self._indicator_cache = generate_signals_cached(
-                df, self._indicator_cache
+            signal_val, indicators_val, ctx.indicator_cache = generate_signals_cached(
+                df, ctx.indicator_cache
             )
             entry.signal = signal_val.value
             entry.indicators = indicators_val
         except Exception as exc:
             entry.error = f"Signal error: {exc}"
-            logger.error("Error generating signal: %s", exc)
+            logger.error("Error generating signal for %s: %s", symbol, exc)
 
-        # Risk check
+        # --- Risk check ---
         risk_decision = None
         if last_close > 0:
-            risk_decision = self.risk_manager.evaluate(signal_val, last_close, df, qty, account=self._account_cache, atr_val=indicators_val.atr)
+            risk_decision = self.risk_manager.evaluate(
+                signal_val,
+                last_close,
+                df,
+                ctx.trade_qty,
+                symbol=symbol,
+                account=self._account_cache,
+                atr_val=indicators_val.atr,
+            )
 
-        # Order execution
+        # --- Order execution ---
         action = "HOLD"
         if signal_val == Signal.BUY and risk_decision is not None and risk_decision.is_allowed:
             try:
@@ -211,23 +271,45 @@ class TradingEngine:
 
         entry.action = action
 
-        # Account snapshot (only fetch on trade, use cache otherwise)
-        placed_trade = action in ("BUY ORDER PLACED", "SELL ORDER PLACED")
+        # --- Account snapshot after trade ---
+        placed_trade = "ORDER PLACED" in action
         if placed_trade:
             try:
                 self._account_cache = self.broker.get_account()
             except Exception as exc:
                 logger.error("Failed to retrieve account snapshot: %s", exc)
+
+        # --- Portfolio PnL with current prices for all symbols ---
+        pm = self.broker.portfolio_manager
+        if pm is not None and last_close > 0:
+            try:
+                prices: Dict[str, float] = {}
+                for sym, c in self._state.symbols.items():
+                    if c.last_close > 0:
+                        prices[sym] = c.last_close
+                prices[symbol] = last_close
+                self._account_cache = pm.get_account_snapshot(prices)
+            except Exception as exc:
+                logger.error("Failed to compute portfolio snapshot: %s", exc)
+
         if self._account_cache is not None:
             entry.cash = self._account_cache.cash
             entry.buying_power = self._account_cache.buying_power
+            entry.equity = self._account_cache.equity
+            entry.realized_pnl = self._account_cache.realized_pnl
+
+        # --- Update per-symbol context ---
+        ctx.last_close = last_close
+        ctx.last_signal = signal_val
+        ctx.last_indicators = indicators_val
 
         with self._state_lock:
-            self._state.market.last_close = last_close
-            self._state.market.last_signal = signal_val
-            self._state.market.indicators = indicators_val
-            self._state.price_history.append({"t": ts, "price": round(last_close, 2)})
-            self._state.signal_history.append({"t": ts, "signal": signal_val.value})
+            self._state.price_history.append(
+                {"t": ts, "price": round(last_close, 2), "symbol": symbol}
+            )
+            self._state.signal_history.append(
+                {"t": ts, "signal": signal_val.value, "symbol": symbol}
+            )
             if placed_trade:
                 if action == "BUY ORDER PLACED":
                     self._state.buy_count += 1
@@ -237,6 +319,10 @@ class TradingEngine:
                 if self._account_cache is not None:
                     self._state.account = self._account_cache
             self._state.trade_log.appendleft(entry)
+
+    # ------------------------------------------------------------------
+    # Event-driven path (background loop)
+    # ------------------------------------------------------------------
 
     def _on_bar(self, bar: BarUpdate) -> None:
         """Thread-safe callback invoked by the data provider on candle close."""
@@ -250,29 +336,40 @@ class TradingEngine:
         max_iters = self.config.max_iterations
 
         with self._state_lock:
-            symbol = self._state.symbol
+            symbols = list(self._state.symbols.keys())
 
-        # Initialise the candle buffer with historical data
-        try:
-            df = self.data_provider.get_candles(symbol, timeframe="5Min", limit=100)
-            if df.empty:
-                logger.error("Failed to fetch initial candle data for %s", symbol)
+        # Initialise candle buffers for all symbols
+        for symbol in symbols:
+            try:
+                df = self.data_provider.get_candles(
+                    symbol, timeframe="5Min", limit=100
+                )
+                if df.empty:
+                    logger.error("Failed to fetch initial candle data for %s", symbol)
+                    with self._state_lock:
+                        self._state.status = BotStatus.STOPPED
+                    return
+                ctx = self._symbol_ctx(symbol)
+                if ctx is not None:
+                    ctx.candle_buffer = df
+                    ctx.last_close = float(df["close"].iloc[-1])
+            except Exception as exc:
+                logger.error(
+                    "Failed to fetch initial candle data for %s: %s", symbol, exc
+                )
                 with self._state_lock:
                     self._state.status = BotStatus.STOPPED
                 return
-            self._candle_buffer = df
-            self._account_cache = self.broker.get_account()
-            with self._state_lock:
-                self._state.market.last_close = float(df["close"].iloc[-1])
-                self._state.account = self._account_cache
-        except Exception as exc:
-            logger.error("Failed to fetch initial candle data: %s", exc)
-            with self._state_lock:
-                self._state.status = BotStatus.STOPPED
-            return
 
-        # Subscribe to real-time bar updates
-        self.data_provider.subscribe_bars(symbol, self._on_bar, "5Min")
+        self._account_cache = self.broker.get_account()
+        with self._state_lock:
+            self._state.account = self._account_cache
+
+        # Subscribe to real-time bar updates for all symbols (single call)
+        self.data_provider.subscribe_bars(symbols, self._on_bar, "5Min")
+
+        with self._state_lock:
+            iteration = self._state.iteration
 
         while not self._stop_event.is_set():
             self._bar_event.wait(timeout=5.0)
@@ -286,25 +383,45 @@ class TradingEngine:
                 self._pending_bars.clear()
                 self._state.iteration += 1
                 iteration = self._state.iteration
-                qty = self._state.trade_qty
 
             if not bars:
                 continue
 
-            new_rows = pd.DataFrame(
-                [(b.open, b.high, b.low, b.close, b.volume) for b in bars],
-                columns=["open", "high", "low", "close", "volume"],
-                index=[b.timestamp for b in bars],
-            )
-            self._candle_buffer = pd.concat([self._candle_buffer, new_rows])
-            if len(self._candle_buffer) > 100:
-                self._candle_buffer = self._candle_buffer.iloc[-100:]
+            # Group bars by symbol and append to respective candle buffers
+            by_symbol: Dict[str, list[BarUpdate]] = {}
+            for b in bars:
+                by_symbol.setdefault(b.symbol, []).append(b)
 
-            logger.info("Processing %d new candle(s) [iteration #%d]", len(bars), iteration)
-            self._execute(self._candle_buffer, symbol, qty, iteration)
+            for sym, sym_bars in by_symbol.items():
+                ctx = self._symbol_ctx(sym)
+                if ctx is None or ctx.candle_buffer is None:
+                    continue
+
+                new_rows = pd.DataFrame(
+                    [
+                        (b.open, b.high, b.low, b.close, b.volume)
+                        for b in sym_bars
+                    ],
+                    columns=["open", "high", "low", "close", "volume"],
+                    index=[b.timestamp for b in sym_bars],
+                )
+                ctx.candle_buffer = pd.concat([ctx.candle_buffer, new_rows])
+                if len(ctx.candle_buffer) > 100:
+                    ctx.candle_buffer = ctx.candle_buffer.iloc[-100:]
+
+                logger.info(
+                    "Processing %d new candle(s) for %s [iteration #%d]",
+                    len(sym_bars),
+                    sym,
+                    iteration,
+                )
+                self._execute_symbol(sym, iteration)
 
             if max_iters is not None and iteration >= max_iters:
-                logger.info("Reached maximum configured iterations (%d). Stopping engine.", max_iters)
+                logger.info(
+                    "Reached maximum configured iterations (%d). Stopping engine.",
+                    max_iters,
+                )
                 with self._state_lock:
                     self._state.status = BotStatus.STOPPED
                 break

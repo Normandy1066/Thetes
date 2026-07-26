@@ -14,6 +14,7 @@ import pandas as pd
 
 @dataclass
 class BarUpdate:
+    symbol: str
     timestamp: pd.Timestamp
     open: float
     high: float
@@ -46,8 +47,8 @@ class MarketDataProvider(ABC):
         """
         pass
 
-    def subscribe_bars(self, symbol: str, callback: Callable[[BarUpdate], None], timeframe: str = "5Min") -> None:
-        """Subscribe to real-time bar (candle) updates.
+    def subscribe_bars(self, symbols: list[str], callback: Callable[[BarUpdate], None], timeframe: str = "5Min") -> None:
+        """Subscribe to real-time bar (candle) updates for one or more symbols.
 
         The *callback* is invoked on a background thread each time a new
         candle closes.  Default implementation is a no-op.

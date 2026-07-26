@@ -8,6 +8,7 @@ from thetes.enums import Signal
 from thetes.engine import TradingEngine
 from thetes.mock_broker import MockBroker
 from thetes.mock_data import MockDataProvider
+from thetes.models import SymbolContext
 from thetes.strategy import generate_signals
 
 CFG = Config(trading_symbol="SPY", trade_qty=100.0)
@@ -69,14 +70,20 @@ class TestEngineRegression:
         c = cfg or CFG
         broker = MockBroker(initial_cash=100_000.0)
         if account_override is not None:
-            broker._cash = account_override.get("cash", 100_000.0)
+            pm = broker._portfolio
+            pm._cash = account_override.get("cash", 100_000.0)
             if "position" in account_override:
                 pos = account_override["position"]
-                broker._positions[pos["symbol"]] = {"qty": pos["qty"], "avg_price": pos["price"]}
+                pm._positions[pos["symbol"]] = {"qty": pos["qty"], "avg_price": pos["price"]}
         engine = TradingEngine(c, broker, MockDataProvider())
         engine._account_cache = broker.get_account()
-        engine._candle_buffer = df
-        engine._execute(df, c.trading_symbol, c.trade_qty, 1)
+        sym = c.trading_symbol
+        engine._state.symbols[sym] = SymbolContext(
+            symbol=sym,
+            trade_qty=c.trade_qty,
+            candle_buffer=df,
+        )
+        engine._execute_symbol(sym, 1)
         state = engine.get_state()
         log = state.trade_log[0]
         return {
@@ -173,9 +180,13 @@ class TestEngineRegression:
             assert r1["action"] == "BUY ORDER PLACED"
 
         engine = r1["engine"]
+        # Reset cooldown state for second symbol (may be stale from previous run)
+        ctx = engine._symbol_ctx("SPY")
+        assert ctx is not None
+        ctx.cooldown_buy = cfg.cooldown_candles  # simulate cooldown after first trade
         df_flat = _make_hold_scenario()
-        engine._candle_buffer = df_flat
-        engine._execute(df_flat, cfg.trading_symbol, cfg.trade_qty, 2)
+        ctx.candle_buffer = df_flat
+        engine._execute_symbol("SPY", 2)
         state2 = engine.get_state()
         trades = [e for e in state2.trade_log if e.action and "ORDER PLACED" in e.action]
         assert len(trades) <= 1
@@ -201,16 +212,23 @@ class TestEngineRegression:
         broker = MockBroker(initial_cash=100_000.0)
         engine = TradingEngine(cfg, broker, MockDataProvider())
         engine._account_cache = broker.get_account()
-        engine._candle_buffer = df
-        engine._execute(df, "SPY", 100.0, 1)
+        sym = cfg.trading_symbol
+        engine._state.symbols[sym] = SymbolContext(
+            symbol=sym,
+            trade_qty=100.0,
+            candle_buffer=df,
+        )
+        engine._execute_symbol("SPY", 1)
         state = engine.get_state()
         log = state.trade_log[0]
         assert log.signal == first_sig.value
         assert log.indicators.ema9 == first_ind.ema9
 
         df2 = _make_hold_scenario()
-        engine._candle_buffer = df2
-        engine._execute(df2, "SPY", 100.0, 2)
+        ctx = engine._symbol_ctx("SPY")
+        assert ctx is not None
+        ctx.candle_buffer = df2
+        engine._execute_symbol("SPY", 2)
         state2 = engine.get_state()
         log2 = state2.trade_log[0]
         sig2, ind2 = generate_signals(df2)

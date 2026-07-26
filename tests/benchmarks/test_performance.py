@@ -373,17 +373,19 @@ class TestAccountCacheEffectiveness:
         broker.get_account = counting_get_account
 
         df = _make_df(100)
-        engine._candle_buffer = df
+        ctx = engine._symbol_ctx("AAPL")
+        assert ctx is not None
+        ctx.candle_buffer = df
         engine._account_cache = original_get_account()
 
-        engine._execute(df, "AAPL", 10.0, 1)
+        engine._execute_symbol("AAPL", 1)
         hold_count = call_counts["trade"]
         print(f"  HOLD iteration: {hold_count} get_account calls (expected 0)")
         assert hold_count == 0, f"Expected 0 get_account calls on HOLD, got {hold_count}"
 
         call_counts["trade"] = 0
         call_counts["hold"] = 0
-        engine._execute(df, "AAPL", 10.0, 2)
+        engine._execute_symbol("AAPL", 2)
         hold_count2 = call_counts["trade"]
         print(f"  HOLD iteration (no trade): {hold_count2} get_account calls (expected 0)")
         assert hold_count2 == 0, f"Expected 0 get_account calls on HOLD, got {hold_count2}"

@@ -11,6 +11,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import pandas as pd
+
 from thetes.enums import BotStatus, Signal
 
 
@@ -42,18 +44,37 @@ class Position:
 
 
 @dataclass
+class SymbolContext:
+    """Per-symbol runtime state owned by the TradingEngine."""
+
+    symbol: str
+    trade_qty: float = 1.0
+    candle_buffer: Optional[pd.DataFrame] = None
+    indicator_cache: Any = None
+    last_signal: Signal = Signal.HOLD
+    last_close: float = 0.0
+    last_indicators: Optional[IndicatorValues] = None
+
+
+@dataclass
 class AccountSnapshot:
     """Point-in-time snapshot of the brokerage account."""
 
     cash: float
     buying_power: float
     positions: list[Position] = field(default_factory=list)
+    equity: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "cash": self.cash,
             "buying_power": self.buying_power,
             "positions": [p.to_dict() for p in self.positions],
+            "equity": self.equity,
+            "realized_pnl": self.realized_pnl,
+            "unrealized_pnl": self.unrealized_pnl,
         }
 
 
@@ -96,6 +117,7 @@ class TradeLogEntry:
 
     timestamp: str = ""
     iteration: int = 0
+    symbol: Optional[str] = None
     signal: Optional[str] = None
     close_price: Optional[float] = None
     indicators: Optional[IndicatorValues] = None
@@ -103,12 +125,16 @@ class TradeLogEntry:
     error: Optional[str] = None
     cash: Optional[float] = None
     buying_power: Optional[float] = None
+    equity: Optional[float] = None
+    realized_pnl: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "timestamp": self.timestamp,
             "iteration": self.iteration,
         }
+        if self.symbol is not None:
+            d["symbol"] = self.symbol
         if self.signal is not None:
             d["signal"] = self.signal
         if self.close_price is not None:
@@ -129,6 +155,10 @@ class TradeLogEntry:
             d["cash"] = self.cash
         if self.buying_power is not None:
             d["buying_power"] = self.buying_power
+        if self.equity is not None:
+            d["equity"] = self.equity
+        if self.realized_pnl is not None:
+            d["realized_pnl"] = self.realized_pnl
         return d
 
 
@@ -157,6 +187,10 @@ class BotState:
     trade_qty: float = 1.0
     loop_delay: int = 10
     iteration: int = 0
+    trading_symbols: tuple[str, ...] = ("AAPL",)
+
+    # Per-symbol runtime contexts (populated at start)
+    symbols: dict[str, SymbolContext] = field(default_factory=dict)
 
     # Market
     market: MarketState = field(default_factory=MarketState)
@@ -185,6 +219,10 @@ class BotState:
         default_factory=lambda: deque(maxlen=MAX_HISTORY_ENTRIES)
     )
 
+    @property
+    def primary_symbol(self) -> str:
+        return self.trading_symbols[0] if self.trading_symbols else self.symbol
+
     # ------------------------------------------------------------------
     # Serialisation for the /api/state endpoint
     # ------------------------------------------------------------------
@@ -194,6 +232,7 @@ class BotState:
         return {
             "running": self.status == BotStatus.RUNNING,
             "symbol": self.symbol,
+            "trading_symbols": list(self.trading_symbols),
             "trade_qty": self.trade_qty,
             "loop_delay": self.loop_delay,
             "iteration": self.iteration,
@@ -208,6 +247,9 @@ class BotState:
             "last_close": self.market.last_close,
             "cash": self.account.cash,
             "buying_power": self.account.buying_power,
+            "equity": self.account.equity,
+            "realized_pnl": self.account.realized_pnl,
+            "unrealized_pnl": self.account.unrealized_pnl,
             "positions": [p.to_dict() for p in self.account.positions],
             "total_trades": self.total_trades,
             "buy_count": self.buy_count,

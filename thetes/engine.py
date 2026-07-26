@@ -88,9 +88,13 @@ class TradingEngine:
                 return
 
             if symbol is not None:
-                self._state.symbol = symbol
-                if symbol not in self._state.trading_symbols:
-                    self._state.trading_symbols = (symbol,)
+                if symbol in self._state.trading_symbols:
+                    self._state.symbol = symbol
+                else:
+                    logger.warning(
+                        "Symbol %r is not in the tracked list %s; ignoring start override.",
+                        symbol, self._state.trading_symbols,
+                    )
             if trade_qty is not None:
                 self._state.trade_qty = trade_qty
             if loop_delay is not None:
@@ -136,6 +140,31 @@ class TradingEngine:
             self._thread.join(timeout=3.0)
             self._thread = None
         logger.info("Trading engine stopped.")
+
+    # ------------------------------------------------------------------
+    # Runtime symbol management
+    # ------------------------------------------------------------------
+
+    def replace_symbols(self, symbols: list[str]) -> None:
+        """Replace the active symbol list at runtime.
+
+        Existing ``SymbolContext`` objects are preserved when the symbol
+        is in both the old and new list; new ones are created with an
+        empty candle buffer.  Removed entries are discarded.
+
+        Thread-safe: acquires ``_state_lock``.
+        """
+        with self._state_lock:
+            old = self._state.symbols
+            new: dict[str, SymbolContext] = {}
+            for s in symbols:
+                if s in old:
+                    new[s] = old[s]
+                else:
+                    new[s] = SymbolContext(symbol=s, trade_qty=self._state.trade_qty)
+            self._state.symbols = new
+            self._state.trading_symbols = tuple(symbols)
+            self._state.symbol = symbols[0]
 
     # ------------------------------------------------------------------
     # State accessors

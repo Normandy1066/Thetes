@@ -55,6 +55,13 @@ class MarketDataProvider(ABC):
         """
         pass
 
+    def update_subscription(self, symbols: list[str]) -> None:
+        """Replace the set of subscribed symbols at runtime.
+
+        Providers override this to re-subscribe without restarting the
+        entire application.  Default is a no-op.
+        """
+
     def unsubscribe(self) -> None:
         """Unsubscribe from all real-time streams.  Default is a no-op."""
         pass

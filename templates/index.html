@@ -242,6 +242,17 @@ main {
             </div>
           </div>
         </div>
+
+        <div style="margin-top:24px;">
+          <div class="port-label" style="margin-bottom:8px;">Tracked Tickers</div>
+          <div id="ticker-list" class="ticker-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <input id="ticker-input" type="text" placeholder="e.g. AAPL" style="flex:1; min-width:0; padding:8px 10px; border:1px solid #e2e8f0; border-radius:4px; font-family:inherit; font-size:0.875rem; background:#f8fafc; color:#44475b; outline:none;">
+            <button id="btn-add-ticker" class="btn" style="width:auto; padding:8px 14px; background:#00d09c; color:#fff; border:none; border-radius:4px; font-weight:500; font-size:0.75rem; cursor:pointer; font-family:inherit;">ADD</button>
+          </div>
+          <div id="ticker-msg" class="text-xs text-muted" style="margin-top:4px;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -302,13 +313,91 @@ $btnStart.addEventListener('click', async () => {
   $btnStart.disabled = true;
   $btnStart.textContent = 'CONNECTING...';
   try {
-    await post('/api/start', { symbol: 'AAPL', trade_qty: 1, loop_delay: 10 });
+    await post('/api/start', {});
   } catch(e) {
     console.error('Failed to start', e);
   }
   startPolling();
 });
 $btnStop.addEventListener('click', () => post('/api/stop'));
+
+// Ticker management
+const $tickerList = document.getElementById('ticker-list');
+const $tickerInput = document.getElementById('ticker-input');
+const $btnAddTicker = document.getElementById('btn-add-ticker');
+const $tickerMsg = document.getElementById('ticker-msg');
+
+async function fetchTickers() {
+  try {
+    const data = await get('/api/tickers');
+    renderTickers(data.tickers || []);
+  } catch(e) { console.warn('ticker poll failed', e); }
+}
+
+function renderTickers(tickers) {
+  $tickerList.innerHTML = tickers.map(s => `
+    <span class="ticker-pill" data-symbol="${s}" style="display:inline-flex; align-items:center; gap:4px; padding:4px 8px; background:#f1f5f9; border-radius:4px; font-size:0.75rem; font-weight:500; color:#44475b;">
+      ${s}
+      <span class="ticker-remove" style="cursor:pointer; color:#94a3b8; font-weight:700; line-height:1;" title="Remove ${s}">&times;</span>
+    </span>
+  `).join('');
+  $tickerList.querySelectorAll('.ticker-remove').forEach(el => {
+    el.addEventListener('click', async () => {
+      const sym = el.parentElement.dataset.symbol;
+      try {
+        await del('/api/tickers', { symbol: sym });
+        await fetchTickers();
+      } catch(e) { console.error('remove failed', e); }
+    });
+  });
+}
+
+$btnAddTicker.addEventListener('click', async () => {
+  const sym = $tickerInput.value.trim().toUpperCase();
+  if (!sym) return;
+  $tickerInput.value = '';
+  $tickerMsg.textContent = '';
+  try {
+    const data = await post('/api/tickers', { symbol: sym });
+    renderTickers(data.tickers || []);
+  } catch(e) {
+    const err = e.data && e.data.error ? e.data.error : 'Failed to add ticker';
+    $tickerMsg.textContent = err;
+  }
+});
+
+$tickerInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') $btnAddTicker.click();
+});
+
+// Helper for DELETE requests
+async function del(url, body) {
+  const r = await fetch(url, {
+    method: 'DELETE',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw { data: err, status: r.status };
+  }
+  return r.json();
+}
+
+// Make post throw on error
+const _post = post;
+post = async function(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw { data: err, status: r.status };
+  }
+  return r.json();
+};
 
 // POLLING
 function startPolling(){
@@ -447,6 +536,7 @@ function drawChart(prices) {
 
 window.addEventListener('load', () => {
   startPolling();
+  fetchTickers();
   window.addEventListener('resize', fetchState);
 });
 </script>

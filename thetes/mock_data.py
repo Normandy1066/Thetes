@@ -44,6 +44,12 @@ class MockDataProvider(MarketDataProvider):
         df.sort_index(inplace=True)
         return df[["open", "high", "low", "close", "volume"]]
 
+    def update_subscription(self, symbols: list[str]) -> None:
+        cb = next(iter(self._callbacks.values())) if self._callbacks else None
+        self.unsubscribe()
+        if cb is not None:
+            self.subscribe_bars(symbols, cb)
+
     def subscribe_bars(self, symbols: list[str], callback: Callable[[BarUpdate], None], timeframe: str = "5Min") -> None:
         """Simulate bar updates with a periodic timer for all *symbols*."""
         for symbol in symbols:

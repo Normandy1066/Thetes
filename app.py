@@ -16,6 +16,7 @@ from thetes.alpaca_broker import AlpacaBroker
 from thetes.mock_data import MockDataProvider
 from thetes.alpaca_data import AlpacaDataProvider
 from thetes.engine import TradingEngine
+from thetes.ticker_manager import TickerManager
 
 # 1. Initialize configuration and logging
 config = Config.from_env()
@@ -36,7 +37,10 @@ else:
 # 3. Create the trading engine
 engine = TradingEngine(config, broker, data_provider)
 
-# 4. Set up Flask app
+# 4. Create ticker manager service
+ticker_manager = TickerManager(engine, config, data_provider)
+
+# 5. Set up Flask app
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
@@ -96,6 +100,64 @@ def api_stop():
 
     engine.stop()
     return jsonify({"status": "stopped"})
+
+
+# ---------------------------------------------------------------------------
+# Ticker management endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/tickers", methods=["GET"])
+def api_get_tickers():
+    """Return the current list of tracked tickers."""
+    return jsonify({"tickers": ticker_manager.get_tickers()})
+
+
+@app.route("/api/tickers", methods=["PUT"])
+def api_replace_tickers():
+    """Replace the entire ticker list."""
+    try:
+        data = request.get_json(silent=True) or {}
+        symbols = data.get("symbols", [])
+        if not isinstance(symbols, list):
+            return jsonify({"error": "symbols must be a list"}), 400
+        result = ticker_manager.replace_tickers(symbols)
+        return jsonify({"tickers": result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Failed to replace tickers")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/tickers", methods=["POST"])
+def api_add_ticker():
+    """Add a ticker to the tracked list."""
+    try:
+        data = request.get_json(silent=True) or {}
+        symbol = data.get("symbol", "")
+        result = ticker_manager.add_ticker(symbol)
+        return jsonify({"tickers": result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Failed to add ticker")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/tickers", methods=["DELETE"])
+def api_remove_ticker():
+    """Remove a ticker from the tracked list."""
+    try:
+        data = request.get_json(silent=True) or {}
+        symbol = data.get("symbol", "")
+        result = ticker_manager.remove_ticker(symbol)
+        return jsonify({"tickers": result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Failed to remove ticker")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from thetes.broker import Broker
 from thetes.config import Config
 from thetes.data_provider import BarUpdate, MarketDataProvider
 from thetes.enums import BotStatus, Signal
-from thetes.models import BotState, MarketState, TradeLogEntry, IndicatorValues
+from thetes.models import AccountSnapshot, BotState, MarketState, TradeLogEntry, IndicatorValues
 from thetes.risk_manager import RiskManager
 from thetes.strategy import IndicatorCache, generate_signals_cached
 
@@ -40,6 +40,7 @@ class TradingEngine:
         self._candle_buffer: pd.DataFrame | None = None
         self._pending_bars: list[BarUpdate] = []
         self._bar_event = threading.Event()
+        self._account_cache: AccountSnapshot | None = None
 
         # Setup initial state
         with self._state_lock:
@@ -145,6 +146,10 @@ class TradingEngine:
                     logger.warning("Data fetch returned empty DataFrame for %s", symbol)
                     return
                 self._candle_buffer = df
+                try:
+                    self._account_cache = self.broker.get_account()
+                except Exception:
+                    pass
             else:
                 new_rows = self.data_provider.get_candles(symbol, timeframe="5Min", limit=2)
                 if not new_rows.empty:
@@ -167,9 +172,6 @@ class TradingEngine:
         entry = TradeLogEntry(timestamp=ts, iteration=iteration)
 
         last_close = float(df["close"].iloc[-1])
-        with self._state_lock:
-            self._state.market.last_close = last_close
-            self._state.price_history.append({"t": ts, "price": round(last_close, 2)})
         entry.close_price = round(last_close, 2)
 
         # Signal
@@ -179,10 +181,6 @@ class TradingEngine:
             signal_val, indicators_val, self._indicator_cache = generate_signals_cached(
                 df, self._indicator_cache
             )
-            with self._state_lock:
-                self._state.market.last_signal = signal_val
-                self._state.market.indicators = indicators_val
-                self._state.signal_history.append({"t": ts, "signal": signal_val.value})
             entry.signal = signal_val.value
             entry.indicators = indicators_val
         except Exception as exc:
@@ -200,9 +198,6 @@ class TradingEngine:
             try:
                 self.broker.buy(symbol, risk_decision.position_size, price=last_close)
                 action = "BUY ORDER PLACED"
-                with self._state_lock:
-                    self._state.buy_count += 1
-                    self._state.total_trades += 1
             except Exception as exc:
                 action = f"BUY FAILED: {exc}"
                 logger.error("Buy order failed for %s: %s", symbol, exc)
@@ -210,26 +205,37 @@ class TradingEngine:
             try:
                 self.broker.sell(symbol, risk_decision.position_size, price=last_close)
                 action = "SELL ORDER PLACED"
-                with self._state_lock:
-                    self._state.sell_count += 1
-                    self._state.total_trades += 1
             except Exception as exc:
                 action = f"SELL FAILED: {exc}"
                 logger.error("Sell order failed for %s: %s", symbol, exc)
 
         entry.action = action
 
-        # Account snapshot
-        try:
-            acct = self.broker.get_account()
-            with self._state_lock:
-                self._state.account = acct
-            entry.cash = acct.cash
-            entry.buying_power = acct.buying_power
-        except Exception as exc:
-            logger.error("Failed to retrieve account snapshot: %s", exc)
+        # Account snapshot (only fetch on trade, use cache otherwise)
+        placed_trade = action in ("BUY ORDER PLACED", "SELL ORDER PLACED")
+        if placed_trade:
+            try:
+                self._account_cache = self.broker.get_account()
+            except Exception as exc:
+                logger.error("Failed to retrieve account snapshot: %s", exc)
+        if self._account_cache is not None:
+            entry.cash = self._account_cache.cash
+            entry.buying_power = self._account_cache.buying_power
 
         with self._state_lock:
+            self._state.market.last_close = last_close
+            self._state.market.last_signal = signal_val
+            self._state.market.indicators = indicators_val
+            self._state.price_history.append({"t": ts, "price": round(last_close, 2)})
+            self._state.signal_history.append({"t": ts, "signal": signal_val.value})
+            if placed_trade:
+                if action == "BUY ORDER PLACED":
+                    self._state.buy_count += 1
+                else:
+                    self._state.sell_count += 1
+                self._state.total_trades += 1
+                if self._account_cache is not None:
+                    self._state.account = self._account_cache
             self._state.trade_log.appendleft(entry)
 
     def _on_bar(self, bar: BarUpdate) -> None:
@@ -255,8 +261,10 @@ class TradingEngine:
                     self._state.status = BotStatus.STOPPED
                 return
             self._candle_buffer = df
+            self._account_cache = self.broker.get_account()
             with self._state_lock:
                 self._state.market.last_close = float(df["close"].iloc[-1])
+                self._state.account = self._account_cache
         except Exception as exc:
             logger.error("Failed to fetch initial candle data: %s", exc)
             with self._state_lock:
@@ -283,20 +291,14 @@ class TradingEngine:
             if not bars:
                 continue
 
-            for bar in bars:
-                row = pd.DataFrame(
-                    {
-                        "open": [bar.open],
-                        "high": [bar.high],
-                        "low": [bar.low],
-                        "close": [bar.close],
-                        "volume": [bar.volume],
-                    },
-                    index=[bar.timestamp],
-                )
-                self._candle_buffer = pd.concat([self._candle_buffer, row])
-                if len(self._candle_buffer) > 100:
-                    self._candle_buffer = self._candle_buffer.iloc[-100:]
+            new_rows = pd.DataFrame(
+                [(b.open, b.high, b.low, b.close, b.volume) for b in bars],
+                columns=["open", "high", "low", "close", "volume"],
+                index=[b.timestamp for b in bars],
+            )
+            self._candle_buffer = pd.concat([self._candle_buffer, new_rows])
+            if len(self._candle_buffer) > 100:
+                self._candle_buffer = self._candle_buffer.iloc[-100:]
 
             logger.info("Processing %d new candle(s) [iteration #%d]", len(bars), iteration)
             self._execute(self._candle_buffer, symbol, qty, iteration)

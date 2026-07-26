@@ -6,7 +6,7 @@ from thetes.broker import Broker
 from thetes.config import Config
 from thetes.enums import Signal
 from thetes.indicators import AtrState, atr, atr_incremental, atr_state_from_series
-from thetes.models import RiskDecision
+from thetes.models import AccountSnapshot, RiskDecision
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,14 @@ class RiskManager:
     def reset(self) -> None:
         self._atr_cache = None
 
-    def evaluate(self, signal: Signal, price: float, df: pd.DataFrame, qty: float) -> RiskDecision:
+    def evaluate(self, signal: Signal, price: float, df: pd.DataFrame, qty: float, account: AccountSnapshot | None = None, atr_val: float | None = None) -> RiskDecision:
         if signal == Signal.HOLD:
             return RiskDecision(is_allowed=False)
 
-        account = self._broker.get_account()
-        atr_val = self._compute_atr(df)
+        if account is None:
+            account = self._broker.get_account()
+        if atr_val is None:
+            atr_val = self._compute_atr(df)
         if atr_val <= 0:
             return RiskDecision(is_allowed=False)
 

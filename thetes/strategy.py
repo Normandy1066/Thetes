@@ -45,6 +45,7 @@ class IndicatorCache:
     atr_state: AtrState
     adx_state: AdxState
     volume_deque: deque[float]
+    volume_sum: float
     volume_sma: float
     prev_close: float
     cooldown_buy: int
@@ -157,8 +158,13 @@ def _compute_from_cache(
     adx_val, adx_state = adx_incremental(new_high, new_low, new_close, cache.adx_state)
 
     vd = cache.volume_deque
+    if len(vd) == vd.maxlen:
+        volume_sum = cache.volume_sum - vd[0]
+    else:
+        volume_sum = cache.volume_sum
     vd.append(new_volume)
-    vol_sma = sum(vd) / len(vd)
+    volume_sum += new_volume
+    vol_sma = volume_sum / len(vd)
     vol_ratio = new_volume / vol_sma if vol_sma > 0 else 1.0
 
     cb = max(0, cache.cooldown_buy - 1)
@@ -194,6 +200,7 @@ def _compute_from_cache(
         atr_state=atr_state,
         adx_state=adx_state,
         volume_deque=vd,
+        volume_sum=volume_sum,
         volume_sma=vol_sma,
         prev_close=new_close,
         cooldown_buy=cb,
@@ -262,6 +269,7 @@ def _compute_full(
         atr_state=atr_state_from_series(high, low, close, cfg.atr_period),
         adx_state=adx_state_from_series(high, low, close, cfg.adx_period),
         volume_deque=deque(volume_vals, maxlen=cfg.volume_ma_period),
+        volume_sum=sum(volume_vals),
         volume_sma=vol_sma_val,
         prev_close=close_val,
         cooldown_buy=cb,

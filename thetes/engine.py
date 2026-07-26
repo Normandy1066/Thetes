@@ -190,7 +190,7 @@ class TradingEngine:
         # Risk check
         risk_decision = None
         if last_close > 0:
-            risk_decision = self.risk_manager.evaluate(signal_val, last_close, df, qty)
+            risk_decision = self.risk_manager.evaluate(signal_val, last_close, df, qty, account=self._account_cache, atr_val=indicators_val.atr)
 
         # Order execution
         action = "HOLD"

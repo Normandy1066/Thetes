@@ -19,6 +19,8 @@ from thetes.models import BotState, MarketState, TradeLogEntry, IndicatorValues
 from thetes.risk_manager import RiskManager
 from thetes.strategy import IndicatorCache, generate_signals_cached
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +38,7 @@ class TradingEngine:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._indicator_cache: IndicatorCache | None = None
+        self._candle_buffer: pd.DataFrame | None = None
 
         # Setup initial state
         with self._state_lock:
@@ -82,6 +85,7 @@ class TradingEngine:
             self._state.price_history.clear()
             self._state.signal_history.clear()
             self._indicator_cache = None
+            self._candle_buffer = None
             self.risk_manager.reset()
 
             if initial_account:
@@ -138,11 +142,25 @@ class TradingEngine:
         df = None
         last_close = 0.0
         try:
-            df = self.data_provider.get_candles(symbol, timeframe="5Min", limit=100)
-            if df.empty:
-                entry.error = "No candle data retrieved"
-                logger.warning("Data fetch returned empty DataFrame for %s", symbol)
+            if self._candle_buffer is None:
+                df = self.data_provider.get_candles(symbol, timeframe="5Min", limit=100)
+                if df.empty:
+                    entry.error = "No candle data retrieved"
+                    logger.warning("Data fetch returned empty DataFrame for %s", symbol)
+                else:
+                    self._candle_buffer = df
             else:
+                new_rows = self.data_provider.get_candles(symbol, timeframe="5Min", limit=2)
+                if not new_rows.empty:
+                    last_ts = self._candle_buffer.index[-1]
+                    fresh = new_rows[new_rows.index > last_ts]
+                    if not fresh.empty:
+                        self._candle_buffer = pd.concat([self._candle_buffer, fresh])
+                        if len(self._candle_buffer) > 100:
+                            self._candle_buffer = self._candle_buffer.iloc[-100:]
+                df = self._candle_buffer
+
+            if df is not None and not df.empty:
                 last_close = float(df["close"].iloc[-1])
                 with self._state_lock:
                     self._state.market.last_close = last_close

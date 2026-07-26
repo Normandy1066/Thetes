@@ -6,7 +6,20 @@ Abstract interface for market data ingestion.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Callable, Optional
+
 import pandas as pd
+
+
+@dataclass
+class BarUpdate:
+    timestamp: pd.Timestamp
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
 
 
 class MarketDataProvider(ABC):
@@ -31,4 +44,16 @@ class MarketDataProvider(ABC):
             DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
             indexed/sorted by timestamp ascending.
         """
+        pass
+
+    def subscribe_bars(self, symbol: str, callback: Callable[[BarUpdate], None], timeframe: str = "5Min") -> None:
+        """Subscribe to real-time bar (candle) updates.
+
+        The *callback* is invoked on a background thread each time a new
+        candle closes.  Default implementation is a no-op.
+        """
+        pass
+
+    def unsubscribe(self) -> None:
+        """Unsubscribe from all real-time streams.  Default is a no-op."""
         pass
